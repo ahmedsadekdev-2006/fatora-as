@@ -29,12 +29,63 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+function configureCors(app: express.Express) {
+  const configuredOrigins = new Set(
+    [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      process.env.FRONTEND_URL,
+      process.env.VITE_FRONTEND_URL,
+      process.env.ALLOWED_ORIGINS,
+    ]
+      .flatMap(value => {
+        if (!value) return [];
+        return value
+          .split(",")
+          .map(part => part.trim())
+          .filter(Boolean);
+      })
+      .map(origin => {
+        try {
+          return new URL(origin).origin;
+        } catch {
+          return origin;
+        }
+      })
+  );
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const originToAllow = origin && configuredOrigins.has(origin) ? origin : undefined;
+
+    if (originToAllow) {
+      res.setHeader("Access-Control-Allow-Origin", originToAllow);
+    }
+
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Idempotency-Key, X-Requested-With"
+    );
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+
+    next();
+  });
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  configureCors(app);
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   const apiRouter = Router();
@@ -65,15 +116,16 @@ async function startServer() {
     serveStatic(app);
   }
 
-  const preferredPort = parseInt(process.env.PORT || "3000");
+  const preferredPort = Number.parseInt(process.env.PORT || "3000", 10);
   const port = await findAvailablePort(preferredPort);
+  const host = process.env.HOST || "0.0.0.0";
 
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, host, () => {
+    console.log(`Server running on http://${host}:${port}/`);
   });
 }
 

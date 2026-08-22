@@ -17,15 +17,36 @@ const todoInput = z.object({ title: z.string().min(1).max(160), notes: z.string(
 const token = (id: string, role: string, name: string) => new SignJWT({ sub: id, role, name }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(secret);
 async function current(req: Request) { const raw = req.headers.authorization?.replace("Bearer ", "") || req.headers.cookie?.split("fatora_session=")[1]?.split(";")[0]; if (!raw) return null; try { return (await jwtVerify(raw, secret)).payload as { sub: string; role: "ADMIN" | "USER"; name: string }; } catch { return null; } }
 function requireAuth(req: Request, res: Response, role?: "ADMIN") { return current(req).then(user => { if (!user) { res.status(401).json({ message: "يجب تسجيل الدخول" }); return null; } if (role === "ADMIN" && user.role !== "ADMIN") { res.status(403).json({ message: "لا تملك صلاحية" }); return null; } return user; }); }
-function setSession(res: Response, value: string) { res.setHeader("Set-Cookie", `fatora_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`); }
+function setSession(res: Response, value: string) {
+  const isSecure = process.env.NODE_ENV === "production" || process.env.SECURE_COOKIES === "true";
+  const securePart = isSecure ? "; Secure" : "";
+  const sameSite = isSecure ? "None" : "Lax";
+  res.setHeader(
+    "Set-Cookie",
+    `fatora_session=${value}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=604800${securePart}`
+  );
+}
 export function sanitizeProductForRole(product: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? product : { ...product, defaultPurchaseCost: undefined }; }
 export function sanitizeInvoiceForRole(invoice: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? invoice : { ...invoice, items: (invoice.items || []).map((item: any) => ({ ...item, purchaseCostAtSale: undefined })) }; }
 
 export function registerMongoApi(router: Router) {
+  router.get("/health", (_req, res) => {
+    res.json({ ok: true, status: "healthy", nodeEnv: process.env.NODE_ENV || "development", timestamp: new Date().toISOString() });
+  });
+
   router.post("/auth/bootstrap", async (_req, res) => { await getMongo(); if (await User.countDocuments() === 0) { const passwordHash = await hash("Admin123!", 12); await User.create({ username: "admin", name: "مدير النظام", passwordHash, role: "ADMIN" }); } res.json({ ok: true }); });
   router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const user = await User.findOne({ username: input.username, active: true }); if (!user || !(await compare(input.password, user.passwordHash))) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" }); setSession(res, await token(String(user._id), user.role, user.name)); res.json({ user: { id: String(user._id), username: user.username, name: user.name, role: user.role } }); });
   router.get("/auth/me", async (req, res) => { const user = await current(req); if (!user) return res.status(401).json({ message: "يجب تسجيل الدخول" }); res.json({ user }); });
-  router.post("/auth/logout", (_req, res) => { res.setHeader("Set-Cookie", "fatora_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"); res.json({ ok: true }); });
+  router.post("/auth/logout", (_req, res) => {
+    const isSecure = process.env.NODE_ENV === "production" || process.env.SECURE_COOKIES === "true";
+    const securePart = isSecure ? "; Secure" : "";
+    const sameSite = isSecure ? "None" : "Lax";
+    res.setHeader(
+      "Set-Cookie",
+      `fatora_session=; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=0${securePart}`
+    );
+    res.json({ ok: true });
+  });
 
   router.get("/customers", async (req, res) => { if (!await requireAuth(req, res)) return; await getMongo(); res.json(await Customer.find({}).sort({ updatedAt: -1 }).lean()); });
   router.post("/customers", async (req, res) => { const user = await requireAuth(req, res); if (!user) return; const body = customerInput.parse(req.body); await getMongo(); const item = await Customer.create({ ...body, balance: body.openingBalance, createdBy: user.sub }); const persisted = await Customer.findById(item._id).lean(); if (!persisted) return res.status(503).json({ message: "تعذر التحقق من حفظ العميل في قاعدة البيانات" }); res.status(201).json(persisted); });
