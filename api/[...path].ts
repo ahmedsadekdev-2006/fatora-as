@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { registerMongoApi } from "../server/mongoApi";
 
 const app = express();
@@ -18,7 +18,7 @@ const configuredOrigins = new Set(
     .filter(Boolean)
 );
 
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
   if (origin && configuredOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);

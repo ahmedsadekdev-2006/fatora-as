@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import express, { type Request, type Response } from "express";
 import { compare, hash } from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { randomUUID } from "node:crypto";
@@ -33,13 +33,13 @@ function setSession(res: Response, value: string) {
 export function sanitizeProductForRole(product: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? product : { ...product, defaultPurchaseCost: undefined }; }
 export function sanitizeInvoiceForRole(invoice: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? invoice : { ...invoice, items: (invoice.items || []).map((item: any) => ({ ...item, purchaseCostAtSale: undefined })) }; }
 
-export function registerMongoApi(router: Router) {
-  router.get("/health", (_req, res) => {
+export function registerMongoApi(router: express.Router) {
+  router.get("/health", (_req: Request, res: Response) => {
     res.json({ ok: true, status: "healthy", nodeEnv: process.env.NODE_ENV || "development", timestamp: new Date().toISOString() });
   });
 
-  router.post("/auth/bootstrap", async (_req, res) => { await getMongo(); if (await User.countDocuments() === 0) { const passwordHash = await hash("Admin123!", 12); await User.create({ username: "admin", name: "مدير النظام", passwordHash, role: "ADMIN" }); } res.json({ ok: true }); });
-  router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const user = await User.findOne({ username: input.username, active: true }); if (!user || !(await compare(input.password, user.passwordHash))) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" }); setSession(res, await token(String(user._id), user.role, user.name)); res.json({ user: { id: String(user._id), username: user.username, name: user.name, role: user.role } }); });
+  router.post("/auth/bootstrap", async (_req: Request, res: Response) => { await getMongo(); if (await User.countDocuments() === 0) { const passwordHash = await hash("Admin123!", 12); await User.create({ username: "admin", name: "مدير النظام", passwordHash, role: "ADMIN" }); } res.json({ ok: true }); });
+  router.post("/auth/login", async (req: Request, res: Response) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const user = await User.findOne({ username: input.username, active: true }); if (!user || !(await compare(input.password, user.passwordHash))) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" }); setSession(res, await token(String(user._id), user.role, user.name)); res.json({ user: { id: String(user._id), username: user.username, name: user.name, role: user.role } }); });
   router.get("/auth/me", async (req, res) => { const user = await current(req); if (!user) return res.status(401).json({ message: "يجب تسجيل الدخول" }); res.json({ user }); });
   router.post("/auth/logout", (_req, res) => {
     const isSecure = process.env.NODE_ENV === "production" || process.env.SECURE_COOKIES === "true";
