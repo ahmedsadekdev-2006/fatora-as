@@ -2,10 +2,5 @@
   "buildCommand": "pnpm run build:client",
   "outputDirectory": "dist/public",
   "framework": "vite",
-  "installCommand": "pnpm install --frozen-lockfile",
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs22.x"
-    }
-  }
+  "installCommand": "pnpm install --frozen-lockfile"
 }
