@@ -1,1 +1,2 @@
-export { default } from "../../api/[...path]";
+import app from "../../api/[...path]";
+export default app;
