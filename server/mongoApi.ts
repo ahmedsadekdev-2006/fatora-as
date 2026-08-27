@@ -7,7 +7,11 @@ import { Customer, Expense, Invoice, Product, User, Todo, getMongo, Payment, Sto
 import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals, calculateItemQuantityDeltas } from "./invoiceLogic";
 import { isSupportedSyncEntity, shouldRejectStaleUpdate } from "./syncLogic";
 
-const secret = new TextEncoder().encode(process.env.JWT_SECRET || "development-only-secret");
+const configuredSecret = process.env.JWT_SECRET;
+if (!configuredSecret && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET must be configured in production");
+}
+const secret = new TextEncoder().encode(configuredSecret || "development-only-secret");
 const userInput = z.object({ username: z.string().min(3).max(60), password: z.string().min(8).max(120), name: z.string().min(2).max(100), role: z.enum(["ADMIN", "USER"]).default("USER") });
 const productInput = z.object({ name: z.string().min(1), sku: z.string().optional(), category: z.string().optional(), defaultSellingPrice: z.number().nonnegative(), defaultPurchaseCost: z.number().nonnegative(), stockQuantity: z.number().nonnegative(), minimumStock: z.number().nonnegative(), unit: z.string().optional() });
 const customerInput = z.object({ name: z.string().min(1), phone: z.string().optional(), address: z.string().optional(), notes: z.string().optional(), openingBalance: z.number().nonnegative().default(0) });
