@@ -1,11 +1,9 @@
 # Vercel deployment
 
-This repository is deployed as two Vercel projects using the same Git repository:
+This repository is deployed as one Vercel project. Vercel serves the Vite
+frontend from `dist/public` and discovers the backend Functions under `api/`.
 
-- `khairat-foods-web`: frontend
-- `khairat-foods-api`: backend serverless API
-
-## Project 1: Frontend
+## Vercel project
 
 Create a Vercel project from the repository with these settings:
 
@@ -29,16 +27,8 @@ VITE_GOOGLE_MAPS_API_KEY=
 
 The production `VITE_API_URL` must be the deployed backend Vercel URL, without a trailing slash.
 
-## Project 2: Backend
-
-Create a second Vercel project from the same repository:
-
-- Root Directory: `.`
-- Framework Preset: `Other`
-- Build Command: leave empty, or use `pnpm run build:server`
-- Install Command: `pnpm install --frozen-lockfile`
-
-Vercel detects `api/[...path].ts` as the serverless backend entry point. The API is available under the `/api` path.
+Vercel detects `api/[...path].ts` and `api/health.ts` as serverless backend
+entry points. The API is available under the `/api` path on the same domain.
 
 Backend environment variables:
 
@@ -56,10 +46,10 @@ MONGODB_DB=fatora
 JWT_SECRET=<long-random-secret>
 
 # يتغير: ضع رابط مشروع Frontend بعد نشره
-FRONTEND_URL=https://<frontend-project>.vercel.app
+FRONTEND_URL=https://<your-project>.vercel.app
 
 # يتغير: نفس رابط Frontend تمامًا، بدون مسافات
-ALLOWED_ORIGINS=https://<frontend-project>.vercel.app
+ALLOWED_ORIGINS=https://<your-project>.vercel.app
 
 # يبقى true في الإنتاج
 SECURE_COOKIES=true
@@ -81,13 +71,12 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 ## Deployment order
 
-1. Deploy the backend project first.
-2. Copy its Vercel URL into the frontend `VITE_API_URL`.
-3. Deploy the frontend project.
-4. Copy the frontend URL into backend `FRONTEND_URL` and `ALLOWED_ORIGINS`.
-5. Redeploy the backend so the final CORS value is included.
-6. Test `https://<backend-project>.vercel.app/api/health`.
-7. Test MongoDB login and one read/write operation from the frontend.
+1. Deploy this single Vercel project.
+2. Set `FRONTEND_URL` and `ALLOWED_ORIGINS` to the project URL.
+3. Keep `VITE_API_URL` empty because frontend and API share the same domain.
+4. Redeploy after saving the environment variables.
+5. Test `https://<your-project>.vercel.app/api/health`.
+6. Test MongoDB login and one read/write operation from the frontend.
 
 ## Local development
 
@@ -97,7 +86,7 @@ Keep local `.env` files outside Git. The existing local server remains available
 pnpm run dev
 ```
 
-For local frontend-to-backend requests, either leave `VITE_API_URL` empty to use same-origin requests or set it to `http://localhost:3000`.
+For local frontend-to-backend requests, set `VITE_API_URL=http://localhost:3000`.
 
 ## Important limitations
 
