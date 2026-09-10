@@ -1,0 +1,12 @@
+{
+  "name": "خيرات Foods | إدارة الأعمال",
+  "short_name": "خيرات Foods",
+  "description": "خيرات Foods — إدارة المبيعات والمخزون والعملاء ببساطة",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f8fb",
+  "theme_color": "#0b6b63",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [{ "src": "/site-icon.ico", "sizes": "any", "type": "image/x-icon", "purpose": "any maskable" }, { "src": "/logo.png", "sizes": "768x768", "type": "image/png", "purpose": "any" }]
+}
