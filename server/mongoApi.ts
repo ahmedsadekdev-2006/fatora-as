@@ -4,7 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Customer, Expense, Invoice, Product, User, Todo, getMongo, Payment, StockMovement, SyncOperation } from "./mongodb.js";
-import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals } from "./invoiceLogic.js";
+import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals, calculateItemQuantityDeltas } from "./invoiceLogic.js";
 import { isSupportedSyncEntity, shouldRejectStaleUpdate } from "./syncLogic.js";
 
 const secret = new TextEncoder().encode(process.env.JWT_SECRET || "development-only-secret");
