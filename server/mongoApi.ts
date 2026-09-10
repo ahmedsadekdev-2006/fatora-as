@@ -3,9 +3,9 @@ import { compare, hash } from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { Customer, Expense, Invoice, Product, User, Todo, getMongo, Payment, StockMovement, SyncOperation } from "./mongodb";
-import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals, calculateItemQuantityDeltas } from "./invoiceLogic";
-import { isSupportedSyncEntity, shouldRejectStaleUpdate } from "./syncLogic";
+import { Customer, Expense, Invoice, Product, User, Todo, getMongo, Payment, StockMovement, SyncOperation } from "./mongodb.js";
+import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals } from "./invoiceLogic.js";
+import { isSupportedSyncEntity, shouldRejectStaleUpdate } from "./syncLogic.js";
 
 const secret = new TextEncoder().encode(process.env.JWT_SECRET || "development-only-secret");
 const userInput = z.object({ username: z.string().min(3).max(60), password: z.string().min(8).max(120), name: z.string().min(2).max(100), role: z.enum(["ADMIN", "USER"]).default("USER") });
