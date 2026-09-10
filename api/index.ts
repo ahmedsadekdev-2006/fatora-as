@@ -49,4 +49,13 @@ app.use(
   }),
 );
 
+// Keep API failures JSON-shaped and visible in Vercel logs instead of returning
+// an opaque HTML error page. This is especially useful for async Mongo/API errors.
+app.use((error: unknown, _req: any, res: any, _next: any) => {
+  console.error("[API] Unhandled request error:", error);
+  if (res.headersSent) return;
+  const message = error instanceof Error ? error.message : "Internal server error";
+  return res.status(500).json({ message: "حدث خطأ داخلي في الخادم", error: message });
+});
+
 export default app;

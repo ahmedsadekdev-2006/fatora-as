@@ -21,7 +21,30 @@ function setSession(res: Response, value: string) { res.setHeader("Set-Cookie", 
 export function sanitizeProductForRole(product: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? product : { ...product, defaultPurchaseCost: undefined }; }
 export function sanitizeInvoiceForRole(invoice: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? invoice : { ...invoice, items: (invoice.items || []).map((item: any) => ({ ...item, purchaseCostAtSale: undefined })) }; }
 
+type AsyncHandler = (req: Request, res: Response, next: (err?: unknown) => void) => unknown;
+const wrapAsync = (handler: AsyncHandler) => (req: Request, res: Response, next: (err?: unknown) => void) => {
+  try {
+    return Promise.resolve(handler(req, res, next)).catch(next);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export function registerMongoApi(router: Router) {
+  // Express 4 does not forward rejected async route promises to error middleware.
+  // Wrap route registration methods locally so database/validation failures become
+  // normal HTTP 500 responses instead of unhandled promise rejections.
+  const routeMethods = ["get", "post", "put", "patch", "delete"] as const;
+  for (const method of routeMethods) {
+    const original = (router as any)[method].bind(router);
+    (router as any)[method] = (path: string, ...handlers: any[]) =>
+      original(path, ...handlers.map(handler =>
+        typeof handler === "function" && handler.constructor?.name === "AsyncFunction"
+          ? wrapAsync(handler)
+          : handler,
+      ));
+  }
+
   router.post("/auth/bootstrap", async (_req, res) => { await getMongo(); if (await User.countDocuments() === 0) { const passwordHash = await hash("Admin123!", 12); await User.create({ username: "admin", name: "مدير النظام", passwordHash, role: "ADMIN" }); } res.json({ ok: true }); });
   router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const user = await User.findOne({ username: input.username, active: true }); if (!user || !(await compare(input.password, user.passwordHash))) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" }); setSession(res, await token(String(user._id), user.role, user.name)); res.json({ user: { id: String(user._id), username: user.username, name: user.name, role: user.role } }); });
   router.get("/auth/me", async (req, res) => { const user = await current(req); if (!user) return res.status(401).json({ message: "يجب تسجيل الدخول" }); res.json({ user }); });
