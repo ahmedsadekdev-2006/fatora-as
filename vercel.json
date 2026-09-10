@@ -4,11 +4,7 @@
   "outputDirectory": "dist/public",
   "functions": {
     "api/index.ts": {
-      "includeFiles": [
-        "server/**",
-        "shared/**",
-        "api/**"
-      ]
+      "includeFiles": "server/**"
     }
   },
   "routes": [
