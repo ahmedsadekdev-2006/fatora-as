@@ -16,8 +16,25 @@ const customerInput = z.object({ name: z.string().min(1), phone: z.string().opti
 const invoiceInput = z.object({ clientOperationId: z.string().min(8), customerId: z.string().optional(), customerName: z.string().min(1), items: z.array(z.object({ productId: z.string(), quantity: z.number().positive(), sellingPrice: z.number().nonnegative() })).min(1), discount: z.number().nonnegative().default(0), paidAmount: z.number().nonnegative().default(0) });
 const todoInput = z.object({ title: z.string().min(1).max(160), notes: z.string().max(2000).optional().default(""), status: z.enum(["OPEN", "DONE"]).default("OPEN"), priority: z.enum(["LOW", "MEDIUM", "HIGH"]).default("MEDIUM"), dueDate: z.coerce.date().nullable().optional() });
 
-const token = (id: string, role: string, name: string) => new SignJWT({ sub: id, role, name }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(secret);
-async function current(req: Request) { const raw = req.headers.authorization?.replace("Bearer ", "") || req.headers.cookie?.split("fatora_session=")[1]?.split(";")[0]; if (!raw) return null; try { return (await jwtVerify(raw, secret)).payload as { sub: string; role: "ADMIN" | "USER"; name: string }; } catch { return null; } }
+const token = (id: string, role: string, name: string, username: string) => new SignJWT({ sub: id, role, name, username }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(secret);
+async function current(req: Request) {
+  const raw = req.headers.authorization?.replace("Bearer ", "") || req.headers.cookie?.split("fatora_session=")[1]?.split(";")[0];
+  if (!raw) return null;
+  try {
+    const payload = await jwtVerify(raw, secret);
+    await getMongo();
+    const dbUser = await User.findById(String(payload.payload.sub)).lean();
+    if (!dbUser || dbUser.active === false) return null;
+    return {
+      sub: String(dbUser._id),
+      role: String(dbUser.role).toUpperCase() === "ADMIN" ? "ADMIN" : "USER",
+      name: dbUser.name || "الحساب",
+      username: dbUser.username,
+    } as { sub: string; role: "ADMIN" | "USER"; name: string; username: string };
+  } catch {
+    return null;
+  }
+}
 function requireAuth(req: Request, res: Response, role?: "ADMIN") { return current(req).then(user => { if (!user) { res.status(401).json({ message: "يجب تسجيل الدخول" }); return null; } if (role === "ADMIN" && user.role !== "ADMIN") { res.status(403).json({ message: "لا تملك صلاحية" }); return null; } return user; }); }
 function setSession(res: Response, value: string) { res.setHeader("Set-Cookie", `fatora_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`); }
 export function sanitizeProductForRole(product: any, role: "ADMIN" | "USER") { return role === "ADMIN" ? product : { ...product, defaultPurchaseCost: undefined }; }
@@ -35,55 +52,47 @@ const wrapAsync = (handler: AsyncHandler) => (req: Request, res: Response, next:
 export async function ensureBootstrapAdminUser() {
   await getMongo();
 
-  const adminCandidate = await User.findOne({
+  // Bootstrap must never rename/reset an existing admin account.
+  // This is important because the admin username and password are editable.
+  const existingAdmin = await User.findOne({ role: /^admin$/i, active: { $ne: false } }).lean();
+  if (existingAdmin) return;
+
+  // Repair only clearly identifiable legacy admin records. Never convert a normal
+  // USER account just because its name happens to contain "admin" or "مدير".
+  const legacyAdmin = await User.findOne({
     $or: [
-      { username: DEFAULT_ADMIN_USERNAME },
-      { username: { $in: [null, "", undefined] } },
-      { name: /admin|مدير/i },
-      { email: /admin|مدير/i },
       { role: /^admin$/i },
+      {
+        username: { $in: [null, "", undefined] },
+        $or: [{ name: /admin|مدير/i }, { email: /admin|مدير/i }],
+      },
     ],
   }).sort({ createdAt: -1 });
 
-  if (!adminCandidate) {
-    const passwordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
-    await User.create({
-      username: DEFAULT_ADMIN_USERNAME,
-      name: "مدير النظام",
-      passwordHash,
-      role: "ADMIN",
-      active: true,
-    });
+  if (legacyAdmin) {
+    const defaultPasswordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
+    await User.updateOne(
+      { _id: legacyAdmin._id },
+      {
+        $set: {
+          username: DEFAULT_ADMIN_USERNAME,
+          role: "ADMIN",
+          active: true,
+          passwordHash: defaultPasswordHash,
+          name: legacyAdmin.name || "مدير النظام",
+        },
+      },
+    );
     return;
   }
 
-  const normalizedRole = "ADMIN";
-  const normalizedUsername = DEFAULT_ADMIN_USERNAME;
-  const defaultPasswordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
-  const shouldResetPassword = !adminCandidate.passwordHash || !(await compare(DEFAULT_ADMIN_PASSWORD, adminCandidate.passwordHash));
-
-  await User.updateOne(
-    { _id: adminCandidate._id },
-    {
-      $set: {
-        username: normalizedUsername,
-        name: adminCandidate.name || "مدير النظام",
-        role: normalizedRole,
-        active: true,
-        passwordHash: shouldResetPassword ? defaultPasswordHash : adminCandidate.passwordHash,
-      },
-    },
-    { upsert: true }
-  );
-
-  await User.deleteMany({
-    _id: { $ne: adminCandidate._id },
-    $or: [
-      { username: DEFAULT_ADMIN_USERNAME },
-      { name: /admin|مدير/i },
-      { email: /admin|مدير/i },
-      { role: /^admin$/i },
-    ],
+  const passwordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
+  await User.create({
+    username: DEFAULT_ADMIN_USERNAME,
+    name: "مدير النظام",
+    passwordHash,
+    role: "ADMIN",
+    active: true,
   });
 }
 
@@ -103,23 +112,23 @@ export function registerMongoApi(router: Router) {
   }
 
   router.post("/auth/bootstrap", async (_req, res) => { await ensureBootstrapAdminUser(); res.json({ ok: true }); });
-  router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const normalizedUserName = String(input.username || "").trim(); const user = normalizedUserName === DEFAULT_ADMIN_USERNAME
-    ? await User.findOne({ $or: [{ username: normalizedUserName }, { username: { $in: [null, "", undefined] } }, { name: /admin|مدير/i }, { email: /admin|مدير/i }, { role: /^admin$/i }] , active: true }).sort({ createdAt: -1 })
-    : await User.findOne({ username: normalizedUserName, active: true });
+  router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const normalizedUserName = String(input.username || "").trim(); const user = await User.findOne({ username: normalizedUserName, active: true });
 
     if (!user) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
 
     const passwordHash = user.passwordHash || "";
     const isValid = await compare(input.password, passwordHash);
-    if (!isValid && input.password === DEFAULT_ADMIN_PASSWORD) {
-      const nextHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
-      await User.updateOne({ _id: user._id }, { $set: { username: DEFAULT_ADMIN_USERNAME, passwordHash: nextHash, role: "ADMIN", active: true } });
-    } else if (!isValid) {
+    if (!isValid) {
       return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
     }
 
-    const normalizedUser = { ...user.toObject ? user.toObject() : user, username: DEFAULT_ADMIN_USERNAME, role: "ADMIN", name: user.name || "مدير النظام" };
-    setSession(res, await token(String(normalizedUser._id), normalizedUser.role, normalizedUser.name));
+    const normalizedUser = {
+      ...(user.toObject ? user.toObject() : user),
+      username: user.username,
+      role: user.role,
+      name: user.name || "مدير النظام",
+    };
+    setSession(res, await token(String(normalizedUser._id), normalizedUser.role, normalizedUser.name, normalizedUser.username));
     res.json({ user: { id: String(normalizedUser._id), username: normalizedUser.username, name: normalizedUser.name, role: normalizedUser.role } });
   });
   router.get("/auth/me", async (req, res) => { const user = await current(req); if (!user) return res.status(401).json({ message: "يجب تسجيل الدخول" }); res.json({ user }); });
