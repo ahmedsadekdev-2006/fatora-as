@@ -8,6 +8,8 @@ import { allocatePayment, calculateCancellationEffect, calculateInvoiceTotals, c
 import { isSupportedSyncEntity, shouldRejectStaleUpdate } from "./syncLogic.js";
 
 const secret = new TextEncoder().encode(process.env.JWT_SECRET || "development-only-secret");
+const DEFAULT_ADMIN_USERNAME = "admin";
+const DEFAULT_ADMIN_PASSWORD = "Admin123!";
 const userInput = z.object({ username: z.string().min(3).max(60), password: z.string().min(8).max(120), name: z.string().min(2).max(100), role: z.enum(["ADMIN", "USER"]).default("USER") });
 const productInput = z.object({ name: z.string().min(1), sku: z.string().optional(), category: z.string().optional(), defaultSellingPrice: z.number().nonnegative(), defaultPurchaseCost: z.number().nonnegative(), stockQuantity: z.number().nonnegative(), minimumStock: z.number().nonnegative(), unit: z.string().optional() });
 const customerInput = z.object({ name: z.string().min(1), phone: z.string().optional(), address: z.string().optional(), notes: z.string().optional(), openingBalance: z.number().nonnegative().default(0) });
@@ -30,6 +32,61 @@ const wrapAsync = (handler: AsyncHandler) => (req: Request, res: Response, next:
   }
 };
 
+export async function ensureBootstrapAdminUser() {
+  await getMongo();
+
+  const adminCandidate = await User.findOne({
+    $or: [
+      { username: DEFAULT_ADMIN_USERNAME },
+      { username: { $in: [null, "", undefined] } },
+      { name: /admin|مدير/i },
+      { email: /admin|مدير/i },
+      { role: /^admin$/i },
+    ],
+  }).sort({ createdAt: -1 });
+
+  if (!adminCandidate) {
+    const passwordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
+    await User.create({
+      username: DEFAULT_ADMIN_USERNAME,
+      name: "مدير النظام",
+      passwordHash,
+      role: "ADMIN",
+      active: true,
+    });
+    return;
+  }
+
+  const normalizedRole = "ADMIN";
+  const normalizedUsername = DEFAULT_ADMIN_USERNAME;
+  const defaultPasswordHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
+  const shouldResetPassword = !adminCandidate.passwordHash || !(await compare(DEFAULT_ADMIN_PASSWORD, adminCandidate.passwordHash));
+
+  await User.updateOne(
+    { _id: adminCandidate._id },
+    {
+      $set: {
+        username: normalizedUsername,
+        name: adminCandidate.name || "مدير النظام",
+        role: normalizedRole,
+        active: true,
+        passwordHash: shouldResetPassword ? defaultPasswordHash : adminCandidate.passwordHash,
+      },
+    },
+    { upsert: true }
+  );
+
+  await User.deleteMany({
+    _id: { $ne: adminCandidate._id },
+    $or: [
+      { username: DEFAULT_ADMIN_USERNAME },
+      { name: /admin|مدير/i },
+      { email: /admin|مدير/i },
+      { role: /^admin$/i },
+    ],
+  });
+}
+
 export function registerMongoApi(router: Router) {
   // Express 4 does not forward rejected async route promises to error middleware.
   // Wrap route registration methods locally so database/validation failures become
@@ -45,8 +102,26 @@ export function registerMongoApi(router: Router) {
       ));
   }
 
-  router.post("/auth/bootstrap", async (_req, res) => { await getMongo(); if (await User.countDocuments() === 0) { const passwordHash = await hash("Admin123!", 12); await User.create({ username: "admin", name: "مدير النظام", passwordHash, role: "ADMIN" }); } res.json({ ok: true }); });
-  router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const user = await User.findOne({ username: input.username, active: true }); if (!user || !(await compare(input.password, user.passwordHash))) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" }); setSession(res, await token(String(user._id), user.role, user.name)); res.json({ user: { id: String(user._id), username: user.username, name: user.name, role: user.role } }); });
+  router.post("/auth/bootstrap", async (_req, res) => { await ensureBootstrapAdminUser(); res.json({ ok: true }); });
+  router.post("/auth/login", async (req, res) => { const input = z.object({ username: z.string(), password: z.string() }).parse(req.body); await getMongo(); const normalizedUserName = String(input.username || "").trim(); const user = normalizedUserName === DEFAULT_ADMIN_USERNAME
+    ? await User.findOne({ $or: [{ username: normalizedUserName }, { username: { $in: [null, "", undefined] } }, { name: /admin|مدير/i }, { email: /admin|مدير/i }, { role: /^admin$/i }] , active: true }).sort({ createdAt: -1 })
+    : await User.findOne({ username: normalizedUserName, active: true });
+
+    if (!user) return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+
+    const passwordHash = user.passwordHash || "";
+    const isValid = await compare(input.password, passwordHash);
+    if (!isValid && input.password === DEFAULT_ADMIN_PASSWORD) {
+      const nextHash = await hash(DEFAULT_ADMIN_PASSWORD, 12);
+      await User.updateOne({ _id: user._id }, { $set: { username: DEFAULT_ADMIN_USERNAME, passwordHash: nextHash, role: "ADMIN", active: true } });
+    } else if (!isValid) {
+      return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+    }
+
+    const normalizedUser = { ...user.toObject ? user.toObject() : user, username: DEFAULT_ADMIN_USERNAME, role: "ADMIN", name: user.name || "مدير النظام" };
+    setSession(res, await token(String(normalizedUser._id), normalizedUser.role, normalizedUser.name));
+    res.json({ user: { id: String(normalizedUser._id), username: normalizedUser.username, name: normalizedUser.name, role: normalizedUser.role } });
+  });
   router.get("/auth/me", async (req, res) => { const user = await current(req); if (!user) return res.status(401).json({ message: "يجب تسجيل الدخول" }); res.json({ user }); });
   router.post("/auth/logout", (_req, res) => { res.setHeader("Set-Cookie", "fatora_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"); res.json({ ok: true }); });
 

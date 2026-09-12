@@ -1,6 +1,9 @@
+import { compare, hash } from "bcryptjs";
 import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import { COOKIE_NAME } from "../shared/const";
+import { ensureBootstrapAdminUser } from "./mongoApi.js";
+import { User } from "./mongodb.js";
 import type { TrpcContext } from "./_core/context";
 
 type CookieCall = {
@@ -58,5 +61,28 @@ describe("auth.logout", () => {
       httpOnly: true,
       path: "/",
     });
+  });
+
+  it("repairs a legacy admin account so bootstrap/login work again", async () => {
+    const legacyUser = await User.collection.insertOne({
+      name: "ARC Admin",
+      email: "legacy-admin@example.com",
+      passwordHash: await hash("old-password", 12),
+      role: "admin",
+      active: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await ensureBootstrapAdminUser();
+
+    const user = await User.findById(legacyUser.insertedId).lean();
+    expect(user).toMatchObject({
+      username: "admin",
+      role: "ADMIN",
+      active: true,
+      name: "ARC Admin",
+    });
+    expect(await compare("Admin123!", String(user?.passwordHash))).toBe(true);
   });
 });
